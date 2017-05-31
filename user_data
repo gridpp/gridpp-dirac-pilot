@@ -1,0 +1,228 @@
+#!/bin/bash
+#
+# GridPP DIRAC user_data script
+# wget line hacked to get GridPP pilot directory
+#
+# Contains the following ##user_data___## substitutions:
+#
+# user_data_file_hostkey and user_data_file_hostcert
+# or user_data_option_x509_proxy
+
+# user_data_space
+# user_data_machinetype
+# user_data_machinefeatures_url
+# user_data_jobfeatures_url
+# user_data_joboutputs_url
+#
+# Each substitution pattern may occur more than once in this template. If you
+# are reading a processed file, then these substitutions will already have 
+# been made below.
+#
+# This file should normally be processed by Vac (version 2.01 onwards)
+#
+# Andrew.McNab@cern.ch March 2017
+#
+
+# The user data script can be run by ec2-init & HEPIX contextualisation, if
+# that happens this script runs twice and things go bad (because one of the
+# scripts shuts the machine down early). This is a simple locking mechanism to
+# prevent that.
+sleep $(($RANDOM % 20))
+if [ -f /tmp/user_data_running ]; then
+  exit 1
+fi
+touch /tmp/user_data_running
+
+mkdir -p /var/spool/joboutputs
+(
+date --utc +"%Y-%m-%d %H:%M:%S %Z user_data Start user_data on $HOSTNAME"
+
+# Record MJFJO as substituted here by LM lifecycle manager
+export MACHINEFEATURES='##user_data_machinefeatures_url##'
+export JOBFEATURES='##user_data_jobfeatures_url##'
+export JOBOUTPUTS='##user_data_joboutputs_url##'
+
+# Save whatever we use for other scripts
+/bin/echo -e "export MACHINEFEATURES=$MACHINEFEATURES\nexport JOBFEATURES=$JOBFEATURES\nexport JOBOUTPUTS=$JOBOUTPUTS" > /etc/profile.d/mjf.sh
+/bin/echo -e "setenv MACHINEFEATURES $MACHINEFEATURES\nsetenv JOBFEATURES $JOBFEATURES\nsetenv JOBOUTPUTS $JOBOUTPUTS" > /etc/profile.d/mjf.csh
+
+export CE_NAME='##user_data_space##'
+export VM_UUID='##user_data_uuid##'
+export VO='##user_data_option_vo##'
+
+if [ "$VM_UUID" = "" -a "$JOBFEATURES" != "" ] ; then
+  export VM_UUID=`python -c "import urllib ; print urllib.urlopen('$JOBFEATURES/job_id').read().strip()"`
+fi
+
+if [ "$VM_UUID" = "" ] ; then
+  # If still unset then just use the hostname from the LM lifecycle manager
+  export VM_UUID=`date +'%s.##user_data_machine_hostname##'`
+fi
+
+# anyone can create directories there
+mkdir -p /scratch
+chmod ugo+rwxt /scratch
+
+# Scratch tmp for TMPDIR
+mkdir -p /scratch/tmp
+chmod ugo+rwxt /scratch/tmp
+
+mkdir -p /scratch/plt/etc/grid-security
+export X509_USER_PROXY=/scratch/plt/etc/grid-security/x509proxy.pem
+
+if [ ! -z "##user_data_option_x509_proxy##" ] ; then
+  # Simple if we are given an X.509 Proxy
+  cat <<-X5_EOF > $X509_USER_PROXY
+	##user_data_option_x509_proxy##
+	X5_EOF
+
+  cp $X509_USER_PROXY /scratch/plt/etc/grid-security/hostkey.pem
+  cp $X509_USER_PROXY /scratch/plt/etc/grid-security/hostcert.pem
+
+elif [ ! -z "##user_data_file_hostcert##" ] ; then
+  # Given full host cert/key pair
+  cat <<-X5_EOF > /scratch/plt/etc/grid-security/hostkey.pem
+	##user_data_file_hostkey##
+	X5_EOF
+  cat <<-X5_EOF > /scratch/plt/etc/grid-security/hostcert.pem
+	##user_data_file_hostcert##
+	X5_EOF
+  cat /scratch/plt/etc/grid-security/hostkey.pem /scratch/plt/etc/grid-security/hostcert.pem > $X509_USER_PROXY
+else
+  date --utc +"%Y-%m-%d %H:%M:%S %Z Neither user_data_option_x509_proxy or user_data_option_hostkey/_hostcert defined!"
+fi
+
+cp $X509_USER_PROXY /root/x509proxy.pem # Save a copy which will stay owned by root, for root to use
+chmod 0400 /scratch/plt/etc/grid-security/*.pem /root/x509proxy.pem
+
+# Get CA certs from cvmfs
+rm -Rf /etc/grid-security
+ln -sf /cvmfs/grid.cern.ch/etc/grid-security /etc/grid-security
+export X509_CERT_DIR=/etc/grid-security/certificates
+
+# Use grid WN configuration from cvmfs
+ln -sf /cvmfs/grid.cern.ch/umd-sl6wn-test/etc/profile.d/a1_grid_env.sh \
+       /cvmfs/grid.cern.ch/umd-sl6wn-test/etc/profile.d/setup-wn-example.sh /etc/profile.d
+
+# put heartbeat into JOBOUTPUTS volume every 5 minutes
+(
+echo `cut -f1-3 -d' ' /proc/loadavg` `cat /proc/uptime` >/var/spool/joboutputs/heartbeat
+curl --capath $X509_CERT_DIR --cert /root/x509proxy.pem --cacert /root/x509proxy.pem --location --upload-file /var/spool/joboutputs/heartbeat $JOBOUTPUTS/heartbeat
+sleep 300
+) > /var/log/heartbeat.log 2>&1 &
+
+# Log proxies used for cvmfs
+for i in /cvmfs/*
+do
+  attr -g proxy $i
+done
+
+# Avoid age-old sudo problem
+echo 'Defaults !requiretty' >>/etc/sudoers
+echo 'Defaults visiblepw'   >>/etc/sudoers
+
+# The pilot user account plt
+/usr/sbin/useradd -b /scratch plt
+
+chown plt.plt /var/spool/joboutputs
+chmod 0755 /var/spool/joboutputs
+
+# Add plt0102 etc accounts for the payloads that plt can sudo to
+
+# At most one jobagent per logical processor
+processors=`grep '^processor[[:space:]]' /proc/cpuinfo | wc --lines`
+for ((m=0; m < processors; m++))
+do
+  # Up to 100 successive payloads per jobagent
+  for ((n=0; n < 100; n++))
+  do
+    payloaduser=`printf 'plt%02dp%02d' $m $n`
+    payloaduserid=`printf '1%02d%02d' $m $n`
+
+    # Payload user home directory and dot files
+    mkdir /scratch/$payloaduser
+    cp -f /etc/skel/.*shrc /scratch/$payloaduser
+    cp -f /etc/skel/.bash* /scratch/$payloaduser
+
+    # Add to /etc/passwd and /etc/group
+    echo "$payloaduser:x:$payloaduserid:$payloaduserid::/scratch/$payloaduser:/bin/bash" >>/etc/passwd
+    echo "$payloaduser:x:$payloaduserid:plt" >>/etc/group
+
+    # Add the plt group as a secondary group
+    if [ "$payloaduser" = "plt00p00" ] ; then
+      sed -i "s/^plt:.*/&$payloaduser/" /etc/group
+    else
+      sed -i "s/^plt:.*/&,$payloaduser/" /etc/group
+    fi
+
+    # Ownership and permissions of payload home directory
+    chown -R $payloaduser.$payloaduser /scratch/$payloaduser
+    chmod 0775 /scratch/$payloaduser
+
+    # plt user can sudo to any payload user
+    echo "Defaults>$payloaduser !requiretty"           >>/etc/sudoers
+    echo "Defaults>$payloaduser visiblepw"             >>/etc/sudoers
+    echo "Defaults>$payloaduser !env_reset"            >>/etc/sudoers
+    echo "plt ALL = ($payloaduser) NOPASSWD: ALL"      >>/etc/sudoers
+  done
+done
+
+cd /scratch/plt
+# Fetch the DIRAC pilot scripts
+if [ '##user_data_option_dirac_pilot_url##' != '' ] ; then
+  wget --no-directories --recursive --no-parent --execute robots=off --reject 'index.html*' --ca-directory=$X509_CERT_DIR '##user_data_option_dirac_pilot_url##'
+#elif [ '##user_data_url##' != '' ] ; then
+#  # Remove user_data file name back to final slash
+#  user_data_dir=`echo '##user_data_url##' | sed 's:[^/]*$::'`
+#  wget --no-directories --recursive --no-parent --execute robots=off --reject 'index.html*' --ca-directory=$X509_CERT_DIR "$user_data_dir"
+else
+  wget --no-directories --recursive --no-parent --execute robots=off --reject 'index.html*' --ca-directory=$X509_CERT_DIR https://repo.gridpp.ac.uk/vacproject/dev/gridpp/
+fi    
+
+# So payload accounts can create directories here, but not interfere
+chown -R plt.plt /scratch/plt
+chmod 1775 /scratch/plt
+
+# Uncomment for testing with dev.tgz
+#DEVOPTS='--commandExtensions dev,LHCbPilot --commands NagiosProbes,CheckWorkerNode,InstallDIRAC,UnpackDevDev,LHCbConfigureBasics,LHCbConfigureSite,LHCbConfigureArchitecture,LHCbConfigureCPURequirements,MultiLaunchAgent'
+
+# Now run the pilot script
+/usr/bin/sudo -i -n -u plt \
+ X509_USER_PROXY=$X509_USER_PROXY \
+ JOB_ID="##user_data_space##:$VM_UUID:##user_data_machinetype##" \
+ MACHINEFEATURES="$MACHINEFEATURES" JOBFEATURES="$JOBFEATURES" \
+ python /scratch/plt/dirac-pilot.py \
+ -o "/LocalSite/SubmitPool=Pool_${VO}" \
+ -o "/Resources/Computing/CEDefaults/SubmitPool=Pool_${VO}" \
+ -o "/Resources/Computing/CEDefaults/VirtualOrganization=${VO}" \
+ -g "2017-01-27" \
+ --Name '##user_data_space##' \
+ --Queue default \
+ --MaxCycles 1 \
+ --CEType Sudo \
+ --cert --certLocation=/scratch/plt/etc/grid-security \
+ >/var/spool/joboutputs/dirac-pilot.log 2>&1
+
+# Save JobAgent log etc
+cp -f /scratch/plt/jobagent.*.log /scratch/plt/shutdown_message* /var/spool/joboutputs/
+
+cd /var/spool/joboutputs
+for i in *
+do
+  if [ -f $i ] ; then 
+    curl --capath $X509_CERT_DIR --cert /root/x509proxy.pem --cacert /root/x509proxy.pem --location --upload-file "$i" \
+     "$JOBOUTPUTS/"
+    
+    # This will be replaced by extended pilot logging??
+    #curl --capath $X509_CERT_DIR --cert /root/x509proxy.pem --cacert /root/x509proxy.pem --location --upload-file "$i" \
+    #  "https://lhcb-depo.cern.ch:9132/hosts/##user_data_space##/##user_data_machinetype##/$HOSTNAME/$VM_UUID/"
+  fi
+done
+
+# Try conventional shutdown
+date --utc +'%Y-%m-%d %H:%M:%S %Z user_data Finished'
+
+sleep 180
+/sbin/halt -p
+
+) >/var/spool/joboutputs/user_data.log 2>&1 &

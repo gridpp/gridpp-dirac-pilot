@@ -1,0 +1,45 @@
+--- pilot.json
++++ pilot.json
+@@ -2,34 +2,33 @@
+   "Setups": {
+     "GridPP": {
+       "CheckVersion": "True",
+-      "Project": "GridPP",
+       "Commands": {
+         "Vcycle": [
+           "CheckWorkerNode",
+-          "MakeLinkfromCVMFS",
+-          "GitInstallDIRAC",
++          "InstallDIRAC",
+           "ConfigureBasics",
++          "CheckWNCapabilities",
+           "ConfigureSite",
+           "ConfigureArchitecture",
+           "ConfigureCPURequirements",
+           "MultiLaunchAgent"
+         ]
+       },
+-      "Version": "v6r17p15"
++      "Version": "v6r17p18"
+     },
+     "Defaults": {
+       "ConfigurationServer": "dips://dirac01.grid.hep.ph.ic.ac.uk:9135/Configuration/Server",
+-      "Project": "GridPP",
+-      "GenericPilotGroup": "gridpp_pilot",
+-      "CommandExtensions": [
+-        "GridPP"
+-      ]
++      "GenericPilotGroup": "gridpp_pilot"
+     }
+   },
+   "CEs": {
+     "vac04.tier2.hep.manchester.ac.uk": {
+       "Site": "VAC.UKI-NORTHGRID-MAN-HEP.uk",
+       "GridCEType": "Vac"
++    },
++    "iccloud.gridpp.ac.uk": {
++      "Site": "CLOUD.UKI-GridPP-Cloud-IC.uk",
++      "GridCEType": "Vcycle"
+     }
+   },    
+   "DefaultSetup": "GridPP"
