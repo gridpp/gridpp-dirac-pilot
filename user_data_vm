@@ -73,6 +73,10 @@ export JOBOUTPUTS='##user_data_joboutputs_url##'
 
 export CE_NAME='##user_data_space##'
 export VM_UUID='##user_data_uuid##'
+export VO='##user_data_option_vo##'
+if [ "$VO" == "" ] ; then
+  VO=gridpp
+fi
 
 if [ "$VM_UUID" = "" -a "$JOBFEATURES" != "" ] ; then
   export VM_UUID=`python -c "import urllib ; print urllib.urlopen('$JOBFEATURES/job_id').read().strip()"`
@@ -200,8 +204,8 @@ ln -sf /cvmfs/grid.cern.ch/etc/grid-security /etc/grid-security
 export X509_CERT_DIR=/etc/grid-security/certificates
 
 # Use grid WN configuration from cvmfs
-ln -sf /cvmfs/grid.cern.ch/emi3wn-latest/etc/profile.d/a1_grid_env.sh \
-       /cvmfs/grid.cern.ch/emi3wn-latest/etc/profile.d/setup-wn-example.sh /etc/profile.d
+ln -sf /cvmfs/grid.cern.ch/umd-sl6wn-test/etc/profile.d/a1_grid_env.sh \
+       /cvmfs/grid.cern.ch/umd-sl6wn-test/etc/profile.d/setup-wn-example.sh /etc/profile.d
 
 # make a first heartbeat
 echo 0.0 0.0 0.0 0.0 0.0 > /var/spool/joboutputs/heartbeat
@@ -285,10 +289,14 @@ cd /scratch/plt
 # Fetch the DIRAC pilot scripts
 if [ '##user_data_option_dirac_pilot_url##' != '' ] ; then
   wget --no-directories --recursive --no-parent --execute robots=off --reject 'index.html*' --ca-directory=$X509_CERT_DIR '##user_data_option_dirac_pilot_url##'
-elif [ '##user_data_url##' != '' ] ; then
-  # Remove user_data file name back to final slash
-  user_data_dir=`echo '##user_data_url##' | sed 's:[^/]*$::'`
-  wget --no-directories --recursive --no-parent --execute robots=off --reject 'index.html*' --ca-directory=$X509_CERT_DIR "$user_data_dir"
+#elif [ '##user_data_url##' != '' ] ; then
+##
+## We skip this for now while user_data_vm is still used in the parent
+## directory by legacy GridPP configurations
+##
+#  # Remove user_data file name back to final slash
+#  user_data_dir=`echo '##user_data_url##' | sed 's:[^/]*$::'`
+#  wget --no-directories --recursive --no-parent --execute robots=off --reject 'index.html*' --ca-directory=$X509_CERT_DIR "$user_data_dir"
 else
   wget --no-directories --recursive --no-parent --execute robots=off --reject 'index.html*' --ca-directory=$X509_CERT_DIR https://repo.gridpp.ac.uk/vacproject/gridpp/pilot/
 fi    
@@ -306,14 +314,32 @@ chmod 1775 /scratch/plt
  JOB_ID="##user_data_space##:$VM_UUID:##user_data_machinetype##" \
  MACHINEFEATURES="$MACHINEFEATURES" JOBFEATURES="$JOBFEATURES" \
  python /scratch/plt/dirac-pilot.py \
- --debug $DEVOPTS \
- -o '/LocalSite/SubmitPool=Test' \
+ --commands CheckWorkerNode,InstallDIRAC,ConfigureBasics,CheckCECapabilities,CheckWNCapabilities,ConfigureSite,ConfigureArchitecture,ConfigureCPURequirements,MultiLaunchAgent \
+ -o "/LocalSite/SubmitPool=Pool_${VO}" \
+ -o "/Resources/Computing/CEDefaults/SubmitPool=Pool_${VO}" \
+ -o "/Resources/Computing/CEDefaults/VirtualOrganization=${VO}" \
+ -g "2017-01-27" \
  --Name '##user_data_space##' \
  --Queue default \
  --MaxCycles 1 \
  --CEType Sudo \
  --cert --certLocation=/scratch/plt/etc/grid-security \
  >/var/spool/joboutputs/dirac-pilot.log 2>&1
+
+# Now run the pilot script
+#/usr/bin/sudo -i -n -u plt \
+# X509_USER_PROXY=$X509_USER_PROXY \
+# JOB_ID="##user_data_space##:$VM_UUID:##user_data_machinetype##" \
+# MACHINEFEATURES="$MACHINEFEATURES" JOBFEATURES="$JOBFEATURES" \
+# python /scratch/plt/dirac-pilot.py \
+# --debug $DEVOPTS \
+# -o '/LocalSite/SubmitPool=Test' \
+# --Name '##user_data_space##' \
+# --Queue default \
+# --MaxCycles 1 \
+# --CEType Sudo \
+# --cert --certLocation=/scratch/plt/etc/grid-security \
+# >/var/spool/joboutputs/dirac-pilot.log 2>&1
 
 # Save JobAgent and System logs
 cp -f /scratch/plt/jobagent.*.log /scratch/plt/shutdown_message* /var/log/boot.log /var/log/dmesg /var/log/secure /var/log/messages* /etc/cvmfs/default.* \
