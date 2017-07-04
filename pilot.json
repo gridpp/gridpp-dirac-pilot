@@ -22,6 +22,22 @@
      }
    },
    "CEs": {
+     "vac.ph.bham.ac.uk": {
+       "Site": "VAC.UKI-SOUTHGRID-BHAM-HEP.uk",
+       "GridCEType": "Vac"
+     },
+     "vac01.bham-hep.uk": {
+       "Site": "VAC.UKI-SOUTHGRID-BHAM-HEP.uk",
+       "GridCEType": "Vac"
+     },
+     "vac.gla.scotgrid.ac.uk": {
+       "Site": "VAC.UKI-SCOTGRID-GLASGOW.uk",
+       "GridCEType": "Vac"
+     },
+     "vac01.ph.liv.ac.uk": {
+       "Site": "VAC.UKI-NORTHGRID-LIV-HEP.uk",
+       "GridCEType": "Vac"
+     },
      "vac01.tier2.hep.manchester.ac.uk": {
        "Site": "VAC.UKI-NORTHGRID-MAN-HEP.uk",
        "GridCEType": "Vac"
@@ -37,6 +53,22 @@
      "vac04.tier2.hep.manchester.ac.uk": {
        "Site": "VAC.UKI-NORTHGRID-MAN-HEP.uk",
        "GridCEType": "Vac"
+     },
+     "t2vacuum.physics.ox.ac.uk": {
+       "Site": "VAC.UKI-SOUTHGRID-OX-HEP.uk",
+       "GridCEType": "Vac"
+     },
+     "vac01.hep.ucl.ac.uk": {
+       "Site": "VAC.UKI-LT2-UCL-HEP.uk",
+       "GridCEType": "Vac"
+     },
+     "vcycle.cern.ch": {
+       "Site": "CLOUD.CERN-PROD.ch",
+       "GridCEType": "Vcycle"
+     },
+     "vcycle.datacentred.io": {
+       "Site": "CLOUD.Datacentred.uk",
+       "GridCEType": "Vcycle"
      },
      "iccloud.gridpp.ac.uk": {
        "Site": "CLOUD.UKI-GridPP-Cloud-IC.uk",
