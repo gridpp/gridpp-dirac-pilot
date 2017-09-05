@@ -308,8 +308,8 @@ chmod 1775 /scratch/plt
 # Source any include scripts we fetched
 for i in include_vm_*.sh
 do
- if [ -r $i ] ;  then
-   . $i
+ if [ -r "$i" ] ;  then
+   . ./$i
  fi
 done
 
