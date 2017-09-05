@@ -228,13 +228,6 @@ sysctl vm.swappiness=1
 # Don't want to be doing this at 4 or 5am every day!
 rm -f /etc/cron.daily/mlocate.cron
 
-for i in include_vm_*.sh
-do
- if [ -r $i ] ;  then
-   . $i
- fi
-done
-
 # Log proxies used for cvmfs
 attr -g proxy /mnt/.ro
 for i in /cvmfs/*
@@ -311,6 +304,14 @@ fi
 # So payload accounts can create directories here, but not interfere
 chown -R plt.plt /scratch/plt
 chmod 1775 /scratch/plt
+
+# Source any include scripts we fetched
+for i in include_vm_*.sh
+do
+ if [ -r $i ] ;  then
+   . $i
+ fi
+done
 
 # Uncomment for testing with dev.tgz
 #DEVOPTS='--commandExtensions dev,LHCbPilot --commands NagiosProbes,CheckWorkerNode,InstallDIRAC,UnpackDevDev,LHCbConfigureBasics,LHCbConfigureSite,LHCbConfigureArchitecture,LHCbConfigureCPURequirements,MultiLaunchAgent'
