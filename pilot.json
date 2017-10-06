@@ -38,7 +38,7 @@
        "Site": "VAC.UKI-NORTHGRID-LIV-HEP.uk",
        "GridCEType": "Vac"
      },
-     "vac01.tier2.hep.manchester.ac.uk": {
+     "vac01.blackett.manchester.ac.uk": {
        "Site": "VAC.UKI-NORTHGRID-MAN-HEP.uk",
        "GridCEType": "Vac"
      },
@@ -46,11 +46,11 @@
        "Site": "VAC.UKI-NORTHGRID-MAN-HEP.uk",
        "GridCEType": "Vac"
      },
-     "vac03.tier2.hep.manchester.ac.uk": {
+     "vac03.blackett.manchester.ac.uk": {
        "Site": "VAC.UKI-NORTHGRID-MAN-HEP.uk",
        "GridCEType": "Vac"
      },
-     "vac04.tier2.hep.manchester.ac.uk": {
+     "vac04.blackett.manchester.ac.uk": {
        "Site": "VAC.UKI-NORTHGRID-MAN-HEP.uk",
        "GridCEType": "Vac"
      },
@@ -85,6 +85,10 @@
      "iccloud.gridpp.ac.uk": {
        "Site": "CLOUD.UKI-GridPP-Cloud-IC.uk",
        "GridCEType": "Vcycle"
+     },
+     "ce01.tier2.hep.manchester.ac.uk": {
+       "Site": "LCG.UKI-NORTHGRID-MAN-HEP.uk",
+       "GridCEType": "Vac"
      }
    },    
    "DefaultSetup": "GridPP"
