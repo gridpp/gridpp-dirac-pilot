@@ -313,9 +313,6 @@ do
  fi
 done
 
-# Uncomment for testing with dev.tgz
-#DEVOPTS='--commandExtensions dev,LHCbPilot --commands NagiosProbes,CheckWorkerNode,InstallDIRAC,UnpackDevDev,LHCbConfigureBasics,LHCbConfigureSite,LHCbConfigureArchitecture,LHCbConfigureCPURequirements,MultiLaunchAgent'
-
 # Now run the pilot script
 /usr/bin/sudo -i -n -u plt \
  X509_USER_PROXY=$X509_USER_PROXY \
@@ -332,6 +329,7 @@ done
  --MaxCycles 1 \
  --CEType Sudo \
  --cert --certLocation=/scratch/plt/etc/grid-security \
+ ##user_data_option_dirac_opts## \
  >/var/spool/joboutputs/dirac-pilot.log 2>&1
 
 # Now run the pilot script
