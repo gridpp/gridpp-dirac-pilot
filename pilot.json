@@ -14,7 +14,7 @@
            "MultiLaunchAgent"
          ]
        },
-      "Version": "v6r17p18"
+      "Version": "v6r19p4"
      },
      "Defaults": {
        "ConfigurationServer": "dips://dirac01.grid.hep.ph.ic.ac.uk:9135/Configuration/Server",

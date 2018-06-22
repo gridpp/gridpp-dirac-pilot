@@ -23,3 +23,14 @@ cvmfs_config reload
 ## End of added for SKA/LOFAR
 ##
 
+##
+## gridpp is the default VO
+##
+if [ "$VO" == "lhcb" -o "$VO" == "" ] ; then
+  VO=gridpp
+fi
+
+##
+## Use the GridPP per-VO pools
+##
+SUBMIT_POOL_OPTS="-o '/LocalSite/SubmitPool=Pool_${VO}' -o '/Resources/Computing/CEDefaults/SubmitPool=Pool_${VO}' -o '/Resources/Computing/CEDefaults/VirtualOrganization=${VO}' -g '2017-01-27'"

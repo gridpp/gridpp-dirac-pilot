@@ -56,7 +56,7 @@ Content-Disposition: attachment; filename="user_data_script"
 mkdir -p /var/spool/joboutputs
 (
 # Set the hostname if available; display otherwise
-hostname ##user_data_vm_hostname##
+hostname ##user_data_machine_hostname##
 date --utc +"%Y-%m-%d %H:%M:%S %Z user_data_script Start user_data on `hostname`"
 
 echo 1 > /proc/sys/net/ipv6/conf/all/disable_ipv6
@@ -71,21 +71,23 @@ export JOBOUTPUTS='##user_data_joboutputs_url##'
 /bin/echo -e "export MACHINEFEATURES=$MACHINEFEATURES\nexport JOBFEATURES=$JOBFEATURES\nexport JOBOUTPUTS=$JOBOUTPUTS" > /etc/profile.d/mjf.sh
 /bin/echo -e "setenv MACHINEFEATURES $MACHINEFEATURES\nsetenv JOBFEATURES $JOBFEATURES\nsetenv JOBOUTPUTS $JOBOUTPUTS" > /etc/profile.d/mjf.csh
 
-export CE_NAME='##user_data_space##'
-export VM_UUID='##user_data_uuid##'
 export VO='##user_data_option_vo##'
 if [ "$VO" == "" ] ; then
-  VO=gridpp
+  VO=lhcb
 fi
 
+export VM_UUID='##user_data_uuid##'
 if [ "$VM_UUID" = "" -a "$JOBFEATURES" != "" ] ; then
   export VM_UUID=`python -c "import urllib ; print urllib.urlopen('$JOBFEATURES/job_id').read().strip()"`
 fi
 
 if [ "$VM_UUID" = "" ] ; then
-  # If still unset then just use the hostname from the VM lifecycle manager
-  export VM_UUID=`date +'%s.##user_data_vm_hostname##'`
+  # If still unset then just use date and hostname from the VM lifecycle manager
+  export VM_UUID=`date +'%s.##user_data_machine_hostname##'`
 fi
+
+export JOB_ID="##user_data_space##:$VM_UUID:##user_data_machinetype##"
+export PILOT_UUID="vm://##user_data_space##/$JOB_ID"
 
 # Create a shutdown_message if ACPI shutdown signal received
 /bin/echo -e 'echo "100 VM received ACPI shutdown signal from hypervisor" > /var/spool/joboutputs/shutdown_message\n/sbin/shutdown -h now' >/etc/acpi/actions/power.sh
@@ -289,63 +291,49 @@ cd /scratch/plt
 # Fetch the DIRAC pilot scripts
 if [ '##user_data_option_dirac_pilot_url##' != '' ] ; then
   wget --no-directories --recursive --no-parent --execute robots=off --reject 'index.html*' --ca-directory=$X509_CERT_DIR '##user_data_option_dirac_pilot_url##'
-#elif [ '##user_data_url##' != '' ] ; then
-##
-## We skip this for now while user_data_vm is still used in the parent
-## directory by legacy GridPP configurations
-##
-#  # Remove user_data file name back to final slash
-#  user_data_dir=`echo '##user_data_url##' | sed 's:[^/]*$::'`
-#  wget --no-directories --recursive --no-parent --execute robots=off --reject 'index.html*' --ca-directory=$X509_CERT_DIR "$user_data_dir"
+elif [ '##user_data_url##' != '' ] ; then
+  # Remove user_data file name back to final slash
+  user_data_dir=`echo '##user_data_url##' | sed 's:[^/]*$::'`
+  wget --no-directories --recursive --no-parent --execute robots=off --reject 'index.html*' --ca-directory=$X509_CERT_DIR "$user_data_dir"
 else
-  wget --no-directories --recursive --no-parent --execute robots=off --reject 'index.html*' --ca-directory=$X509_CERT_DIR https://repo.gridpp.ac.uk/vacproject/gridpp/pilot/
+  wget --no-directories --recursive --no-parent --execute robots=off --reject 'index.html*' --ca-directory=$X509_CERT_DIR https://lhcb-portal-dirac.cern.ch/pilot/
 fi    
 
 # So payload accounts can create directories here, but not interfere
 chown -R plt.plt /scratch/plt
 chmod 1775 /scratch/plt
 
+SUBMIT_POOL_OPTS="-o '/LocalSite/SubmitPool=Test'"
+
 # Source any include scripts we fetched
 for i in include_vm_*.sh
 do
- if [ -r "$i" ] ;  then
+ if [ -r "$i" ] ; then
    . ./$i
  fi
 done
 
+if [ '##user_data_option_dirac_queue##' != '' ] ; then
+  QUEUE='##user_data_option_dirac_queue##'
+else
+  QUEUE=default
+fi
+
 # Now run the pilot script
 /usr/bin/sudo -i -n -u plt \
  X509_USER_PROXY=$X509_USER_PROXY \
- JOB_ID="##user_data_space##:$VM_UUID:##user_data_machinetype##" \
  MACHINEFEATURES="$MACHINEFEATURES" JOBFEATURES="$JOBFEATURES" \
+ JOB_ID="$JOB_ID" PILOT_UUID="$PILOT_UUID" \
  python /scratch/plt/dirac-pilot.py \
- --commands CheckWorkerNode,InstallDIRAC,ConfigureBasics,CheckCECapabilities,CheckWNCapabilities,ConfigureSite,ConfigureArchitecture,ConfigureCPURequirements,MultiLaunchAgent \
- -o "/LocalSite/SubmitPool=Pool_${VO}" \
- -o "/Resources/Computing/CEDefaults/SubmitPool=Pool_${VO}" \
- -o "/Resources/Computing/CEDefaults/VirtualOrganization=${VO}" \
- -g "2017-01-27" \
+ --debug \
+ $SUBMIT_POOL_OPTS \
  --Name '##user_data_space##' \
- --Queue default \
+ --Queue $QUEUE \
  --MaxCycles 1 \
  --CEType Sudo \
- --cert --certLocation=/scratch/plt/etc/grid-security \
+ --cert --certLocation /scratch/plt/etc/grid-security \
  ##user_data_option_dirac_opts## \
  >/var/spool/joboutputs/dirac-pilot.log 2>&1
-
-# Now run the pilot script
-#/usr/bin/sudo -i -n -u plt \
-# X509_USER_PROXY=$X509_USER_PROXY \
-# JOB_ID="##user_data_space##:$VM_UUID:##user_data_machinetype##" \
-# MACHINEFEATURES="$MACHINEFEATURES" JOBFEATURES="$JOBFEATURES" \
-# python /scratch/plt/dirac-pilot.py \
-# --debug $DEVOPTS \
-# -o '/LocalSite/SubmitPool=Test' \
-# --Name '##user_data_space##' \
-# --Queue default \
-# --MaxCycles 1 \
-# --CEType Sudo \
-# --cert --certLocation=/scratch/plt/etc/grid-security \
-# >/var/spool/joboutputs/dirac-pilot.log 2>&1
 
 # Save JobAgent and System logs
 cp -f /scratch/plt/jobagent.*.log /scratch/plt/shutdown_message* /var/log/boot.log /var/log/dmesg /var/log/secure /var/log/messages* /etc/cvmfs/default.* \
@@ -361,7 +349,7 @@ cp -f /scratch/plt/jobagent.*.log /scratch/plt/shutdown_message* /var/log/boot.l
 
     # This will be replaced by extended pilot logging??
     curl --capath $X509_CERT_DIR --cert /root/x509proxy.pem --cacert /root/x509proxy.pem --location --upload-file "$i" \
-     "https://depo.gridpp.ac.uk/hosts/##user_data_space##/##user_data_machinetype##/##user_data_machine_hostname##/##user_data_uuid##/"
+     "https://lhcb-depo.cern.ch:9132/hosts/##user_data_space##/##user_data_machinetype##/##user_data_machine_hostname##/##user_data_uuid##/"
    fi
   done
 )
