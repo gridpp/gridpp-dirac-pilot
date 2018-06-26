@@ -1,6 +1,8 @@
 """ A set of common tools to be used in pilot commands
 """
 
+__RCSID__ = '$Id$'
+
 import sys
 import time
 import os
@@ -14,7 +16,6 @@ import urllib2
 import signal
 import subprocess
 
-__RCSID__ = '$Id$'
 
 def printVersion( log ):
 
@@ -86,8 +87,7 @@ def retrieveUrlTimeout( url, fileName, log, timeout = 0 ):
       signal.alarm( 0 )
     if fileName:
       return True
-    else:
-      return urlData
+    return urlData
 
   except urllib2.HTTPError as x:
     if x.code == 404:
@@ -134,8 +134,7 @@ class ObjectLoader( object ):
       if module is None:
         return None, None
       #Huge success!
-      else:
-        return module, parentPath
+      return module, parentPath
       #Nothing found, continue
     #Return nothing found
     return None, None
@@ -144,7 +143,7 @@ class ObjectLoader( object ):
   def __recurseImport( self, modName, parentModule = None, hideExceptions = False ):
     """ Internal function to load modules
     """
-    if type( modName ) in types.StringTypes:
+    if isinstance(modName, basestring):
       modName = modName.split( '.' )
     try:
       if parentModule:
@@ -323,7 +322,7 @@ class ExtendedLogger( Logger ):
     pass
     if self.isPilotLoggerOn:
       if sendPilotLog:
-        self.pilotLogger.sendMessage(messageContent = msg,
+        self.pilotLogger.sendMessage( messageContent = msg,
                                       source=source,
                                       phase = phase,
                                       status=status,
@@ -432,6 +431,7 @@ class PilotParams( object ):
     self.workingDir = os.getcwd()
 
     self.optList = {}
+    self.keepPythonPath = False
     self.debugFlag = False
     self.local = False
     self.pilotJSON = None
@@ -442,17 +442,19 @@ class PilotParams( object ):
     self.commandOptions = {}
     self.extensions = []
     self.tags = []
+    self.reqtags = []
     self.site = ""
     self.setup = ""
     self.configServer = ""
     self.installation = ""
     self.ceName = ""
     self.ceType = ""
-    self.gridCEType = ""
     self.queueName = ""
+    self.gridCEType = ""
     self.platform = ""
+    # in case users want to specify the max number of processors requested, per pilot
+    self.maxNumberOfProcessors = 0
     self.minDiskSpace = 2560 #MB
-    self.jobCPUReq = 900
     self.pythonVersion = '27'
     self.userGroup = ""
     self.userDN = ""
@@ -465,6 +467,7 @@ class PilotParams( object ):
     self.gateway = ""
     self.useServerCertificate = False
     self.pilotScriptName = ''
+    self.genericOption = ''
     # DIRAC client installation environment
     self.diracInstalled = False
     self.diracExtensions = []
@@ -477,7 +480,12 @@ class PilotParams( object ):
     self.architectureScript = 'dirac-platform'
     self.certsLocation = '%s/etc/grid-security' % self.workingDir
     self.pilotCFGFile = 'pilot.json'
+    self.replaceDIRACCode = ''
     self.pilotLogging = False
+
+    # Parameters that can be determined at runtime only
+    self.queueParameters = {}  # from CE description
+    self.jobCPUReq = 900  # HS06s, here just a random value
 
     # Set number of allocatable processors from MJF if available
     try:
@@ -486,42 +494,46 @@ class PilotParams( object ):
       self.processors = 1
 
     # Pilot command options
-    self.cmdOpts = ( ( 'b', 'build', 'Force local compilation' ),
-                     ( 'd', 'debug', 'Set debug flag' ),
+    self.cmdOpts = ( ( 'a:', 'gridCEType=', 'Grid CE Type (CREAM etc)' ),
+                     ( 'b',  'build', 'Force local compilation' ),
+                     ( 'c',  'cert', 'Use server certificate instead of proxy' ),
+                     ( 'd',  'debug', 'Set debug flag' ),
                      ( 'e:', 'extraPackages=', 'Extra packages to install (comma separated)' ),
-                     ( 'E:', 'commandExtensions=', 'Python modules with extra commands' ),
-                     ( 'X:', 'commands=', 'Pilot commands to execute' ),
-                     ( 'Z:', 'commandOptions=', 'Options parsed by command modules' ),
                      ( 'g:', 'grid=', 'lcg tools package version' ),
-                     ( 'h', 'help', 'Show this help' ),
+                     ( 'h',  'help', 'Show this help' ),
                      ( 'i:', 'python=', 'Use python<26|27> interpreter' ),
+                     ( 'k',  'keepPP', 'Do not clear PYTHONPATH on start' ),
                      ( 'l:', 'project=', 'Project to install' ),
-                     ( 'p:', 'platform=', 'Use <platform> instead of local one' ),
-                     ( 'u:', 'url=', 'Use <url> to download tarballs' ),
-                     ( 'r:', 'release=', 'DIRAC release to install' ),
                      ( 'n:', 'name=', 'Set <Site> as Site Name' ),
+                     ( 'o:', 'option=', 'Option=value to add' ),
+                     ( 'p:', 'platform=', 'Use <platform> instead of local one' ),
+                     ('m:', 'maxNumberOfProcessors=',
+                      'specify a max number of processors to use'),
+                     ( 'r:', 'release=', 'DIRAC release to install' ),
+                     ( 's:', 'section=', 'Set base section for relative parsed options' ),
+                     ( 'u:', 'url=', 'Use <url> to download tarballs' ),
+                     ( 'x:', 'execute=', 'Execute instead of JobAgent' ),
+                     ( 'y:', 'CEType=', 'CE Type (normally InProcess)' ),
+                     ( 'z',  'pilotLogging', 'Activate pilot logging system' ),
+                     ( 'C:', 'configurationServer=', 'Configuration servers to use' ),
                      ( 'D:', 'disk=', 'Require at least <space> MB available' ),
+                     ( 'E:', 'commandExtensions=', 'Python modules with extra commands' ),
+                     ( 'F:', 'pilotCFGFile=', 'Specify pilot CFG file' ),
+                     ( 'G:', 'Group=', 'DIRAC Group to use' ),
+                     ( 'K:', 'certLocation=', 'Specify server certificate location' ),
                      ( 'M:', 'MaxCycles=', 'Maximum Number of JobAgent cycles to run' ),
                      ( 'N:', 'Name=', 'CE Name' ),
+                     ( 'O:', 'OwnerDN=', 'Pilot OwnerDN (for private pilots)' ),
                      ( 'Q:', 'Queue=', 'Queue name' ),
-                     ( 'y:', 'CEType=', 'CE Type (normally InProcess)' ),
-                     ( 'a:', 'gridCEType=', 'Grid CE Type (CREAM etc)' ),
+                     ( 'R:', 'reference=', 'Use this pilot reference' ),
                      ( 'S:', 'setup=', 'DIRAC Setup to use' ),
-                     ( 'C:', 'configurationServer=', 'Configuration servers to use' ),
-                     ( 'T:', 'CPUTime', 'Requested CPU Time' ),
-                     ( 'G:', 'Group=', 'DIRAC Group to use' ),
-                     ( 'O:', 'OwnerDN', 'Pilot OwnerDN (for private pilots)' ),
+                     ( 'T:', 'CPUTime=', 'Requested CPU Time' ),
                      ( 'U',  'Upload', 'Upload compiled distribution (if built)' ),
                      ( 'V:', 'installation=', 'Installation configuration file' ),
                      ( 'W:', 'gateway=', 'Configure <gateway> as DIRAC Gateway during installation' ),
-                     ( 's:', 'section=', 'Set base section for relative parsed options' ),
-                     ( 'o:', 'option=', 'Option=value to add' ),
-                     ( 'c', 'cert', 'Use server certificate instead of proxy' ),
-                     ( 'C:', 'certLocation=', 'Specify server certificate location' ),
-                     ( 'F:', 'pilotCFGFile=', 'Specify pilot CFG file' ),
-                     ( 'R:', 'reference=', 'Use this pilot reference' ),
-                     ( 'x:', 'execute=', 'Execute instead of JobAgent' ),
-                     ( 'z:', 'pilotLogging', 'Activate pilot logging system' ),
+                     ( 'X:', 'commands=', 'Pilot commands to execute' ),
+                     ( 'Y:', 'replaceDIRACCode=', 'URL of replacement DIRAC TGZ archive' ),
+                     ( 'Z:', 'commandOptions=', 'Options parsed by command modules' )
                    )
 
     # Possibly get Setup and JSON URL/filename from command line
@@ -566,7 +578,7 @@ class PilotParams( object ):
         self.commands = v.split( ',' )
       elif o == '-Z' or o == '--commandOptions':
         for i in v.split( ',' ):
-          self.commandOptions[i.split( '=' )[0]] = i.split( '=', 1 )[1]
+          self.commandOptions[ i.split( '=', 1 )[0].strip() ] = i.split( '=', 1 )[1].strip()
       elif o == '-e' or o == '--extraPackages':
         self.extensions = v.split( ',' )
       elif o == '-n' or o == '--name':
@@ -577,6 +589,8 @@ class PilotParams( object ):
         self.queueName = v
       elif o == '-R' or o == '--reference':
         self.pilotReference = v
+      elif o == '-k' or o == '--keepPP':
+        self.keepPythonPath = True
       elif o in ( '-C', '--configurationServer' ):
         self.configServer = v
       elif o in ( '-G', '--Group' ):
@@ -589,6 +603,8 @@ class PilotParams( object ):
         self.installation = v
       elif o == '-p' or o == '--platform':
         self.platform = v
+      elif o == '-m' or o == '--maxNumberOfProcessors':
+        self.maxNumberOfProcessors = v
       elif o == '-D' or o == '--disk':
         try:
           self.minDiskSpace = int( v )
@@ -616,8 +632,12 @@ class PilotParams( object ):
           self.procesors = int(v)
         except:
           pass
+      elif o == '-Y' or o == '--replaceDIRACCode':
+        self.replaceDIRACCode = v
       elif o == '-z' or o == '--pilotLogging':
         self.pilotLogging = True
+      elif o in ( '-o', '--option' ):
+        self.genericOption = v
 
   def __initJSON( self ):
     """Retrieve pilot parameters from the content of json file. The file should be something like:
@@ -665,9 +685,9 @@ class PilotParams( object ):
 
     The file must contains at least the Defaults section. Missing values are taken from the Defaults setup. """
 
-    with open ( self.pilotCFGFile, 'r' ) as fp:
-      # We save the parsed JSON in case pilot commands need it 
-      # to read their own options 
+    with open( self.pilotCFGFile, 'r' ) as fp:
+      # We save the parsed JSON in case pilot commands need it
+      # to read their own options
       self.pilotJSON = json.load( fp )
 
     if self.ceName:
@@ -677,13 +697,12 @@ class PilotParams( object ):
         self.site = str( self.pilotJSON['CEs'][self.ceName]['Site'] )
       except KeyError:
         pass
-      else:
+      try:
         if not self.gridCEType:
           # We don't override a grid CEType given on the command line!
-          try:
-            self.gridCEType = str( self.pilotJSON['CEs'][self.ceName]['GridCEType'] )
-          except KeyError:
-            pass
+          self.gridCEType = str( self.pilotJSON['CEs'][self.ceName]['GridCEType'] )
+      except KeyError:
+        pass
 
     if not self.setup:
       # We don't use the default to override an explicit value from command line!
@@ -720,44 +739,56 @@ class PilotParams( object ):
           except KeyError:
             pass
 
-    # Now the other options we handle
-    # FIXME: pilotSynchronizer() should publish this as a comma separated list. We are ready for that.
+    # CommandExtensions
+    # pilotSynchronizer() can publish this as a comma separated list. We are ready for that.
     try:
-      if isinstance(self.pilotJSON['Setups'][self.setup]['CommandExtensions'], basestring):
+      if isinstance(self.pilotJSON['Setups'][self.setup]['CommandExtensions'], basestring): # In the specific setup?
         self.commandExtensions = [str( pv ).strip() for pv in self.pilotJSON['Setups'][self.setup]['CommandExtensions'].split(',')]
       else:
         self.commandExtensions = [str( pv ).strip() for pv in self.pilotJSON['Setups'][self.setup]['CommandExtensions']]
     except KeyError:
       try:
-        if isinstance(self.pilotJSON['Setups']['Defaults']['CommandExtensions'], basestring):
+        if isinstance(self.pilotJSON['Setups']['Defaults']['CommandExtensions'], basestring): # Or in the defaults section?
           self.commandExtensions = [str( pv ).strip() for pv in self.pilotJSON['Setups']['Defaults']['CommandExtensions'].split(',')]
         else:
           self.commandExtensions = [str( pv ).strip() for pv in self.pilotJSON['Setups']['Defaults']['CommandExtensions']]
       except KeyError:
         pass
 
+    # CS URL(s)
+    # pilotSynchronizer() can publish this as a comma separated list. We are ready for that
     try:
-      self.configServer = str( self.pilotJSON['Setups'][self.setup]['ConfigurationServer'] )
+      if isinstance(self.pilotJSON['ConfigurationServers'], basestring): # Generic, there may also be setup-specific ones
+        self.configServer = ','.join([str(pv).strip() for pv in self.pilotJSON['ConfigurationServers'].split(',')])
+      else: # it's a list, we suppose
+        self.configServer = ','.join([str(pv).strip() for pv in self.pilotJSON['ConfigurationServers']])
     except KeyError:
+      pass
+    try: # now trying to see if there is setup-specific ones
+      if isinstance(self.pilotJSON['Setups'][self.setup]['ConfigurationServer'], basestring): # In the specific setup?
+        self.configServer = ','.join([str(pv).strip() for pv in self.pilotJSON['Setups'][self.setup]['ConfigurationServer'].split(',')])
+      else: # it's a list, we suppose
+        self.configServer = ','.join([str(pv).strip() for pv in self.pilotJSON['Setups'][self.setup]['ConfigurationServer']])
+    except KeyError: # and if it doesn't exist
       try:
-        self.configServer = str( self.pilotJSON['Setups']['Defaults']['ConfigurationServer'] )
+        if isinstance(self.pilotJSON['Setups']['Defaults']['ConfigurationServer'], basestring): # Is there one in the defaults section?
+          self.configServer = ','.join([str(pv).strip() for pv in self.pilotJSON['Setups']['Defaults']['ConfigurationServer'].split(',')])
+        else: # it's a list, we suppose
+          self.configServer = ','.join([str(pv).strip() for pv in self.pilotJSON['Setups']['Defaults']['ConfigurationServer']])
       except KeyError:
         pass
 
-    # Version might be a scalar or a list. We just want the first one.
+    # Version
+    # There may be a list of versions specified (in a string, comma separated). We just want the first one.
     try:
-      v = self.pilotJSON['Setups'][self.setup]['Version']
+      dVersion = [dv.strip() for dv in self.pilotJSON['Setups'][self.setup]['Version'].split(',', 1)]
     except KeyError:
       try:
-        v = self.pilotJSON['Setups']['Defaults']['Version']
+        dVersion = [dv.strip() for dv in self.pilotJSON['Setups']['Defaults']['Version'].split(',', 1)]
       except KeyError:
-        v = None
-
-    # However version v got set, try to use it if not None
-    if isinstance(v, basestring):
-      self.releaseVersion = str( v )
-    elif v:
-      self.releaseVersion = str( v[0] )
+        dVersion = None
+    if dVersion:
+      self.releaseVersion = str( dVersion[0] )
 
     try:
       self.releaseProject = str( self.pilotJSON['Setups'][self.setup]['Project'] )

@@ -12,6 +12,17 @@
            "ConfigureArchitecture",
            "ConfigureCPURequirements",
            "MultiLaunchAgent"
+         ],
+         "Vac": [
+           "CheckWorkerNode",
+           "InstallDIRAC",
+           "ConfigureBasics",
+           "CheckCECapabilities",
+           "CheckWNCapabilities",
+           "ConfigureSite",
+           "ConfigureArchitecture",
+           "ConfigureCPURequirements",
+           "MultiLaunchAgent"
          ]
        },
       "Version": "v6r19p4"
@@ -46,6 +57,10 @@
        "Site": "VAC.UKI-NORTHGRID-MAN-HEP.uk",
        "GridCEType": "Vac"
      },
+     "vac02.blackett.manchester.ac.uk": {
+       "Site": "VAC.UKI-NORTHGRID-MAN-HEP.uk",
+       "GridCEType": "Vac"
+     },
      "vac03.blackett.manchester.ac.uk": {
        "Site": "VAC.UKI-NORTHGRID-MAN-HEP.uk",
        "GridCEType": "Vac"
@@ -66,20 +81,12 @@
        "Site": "VAC.UKI-LT2-UCL-HEP.uk",
        "GridCEType": "Vac"
      },
-     "vcycle.cern.ch": {
+     "vcycle-cern.blackett.manchester.ac.uk": {
        "Site": "CLOUD.CERN-PROD.ch",
-       "GridCEType": "Vcycle"
-     },
-     "vcycle.datacentred.io": {
-       "Site": "CLOUD.Datacentred.uk",
        "GridCEType": "Vcycle"
      },
      "vcycle-cern.tier2.hep.manchester.ac.uk": {
        "Site": "CLOUD.CERN-PROD.ch",
-       "GridCEType": "Vcycle"
-     },
-     "vcycle-datacentred.tier2.hep.manchester.ac.uk": {
-       "Site": "CLOUD.Datacentred.uk",
        "GridCEType": "Vcycle"
      },
      "iccloud.gridpp.ac.uk": {
@@ -87,6 +94,14 @@
        "GridCEType": "Vcycle"
      },
      "ce01.tier2.hep.manchester.ac.uk": {
+       "Site": "LCG.UKI-NORTHGRID-MAN-HEP.uk",
+       "GridCEType": "Vac"
+     },
+     "ce02.tier2.hep.manchester.ac.uk": {
+       "Site": "LCG.UKI-NORTHGRID-MAN-HEP.uk",
+       "GridCEType": "Vac"
+     },
+     "ce03.tier2.hep.manchester.ac.uk": {
        "Site": "LCG.UKI-NORTHGRID-MAN-HEP.uk",
        "GridCEType": "Vac"
      }

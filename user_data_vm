@@ -205,9 +205,11 @@ rm -Rf /etc/grid-security
 ln -sf /cvmfs/grid.cern.ch/etc/grid-security /etc/grid-security
 export X509_CERT_DIR=/etc/grid-security/certificates
 
-# Use grid WN configuration from cvmfs
-ln -sf /cvmfs/grid.cern.ch/umd-sl6wn-test/etc/profile.d/a1_grid_env.sh \
-       /cvmfs/grid.cern.ch/umd-sl6wn-test/etc/profile.d/setup-wn-example.sh /etc/profile.d
+# These will be picked up by login etc shells
+cat <<EOF > /etc/profile.d/grid-paths.sh
+export X509_CERT_DIR=/etc/grid-security/certificates
+export X509_VOMS_DIR=/etc/grid-security/vomsdir
+EOF
 
 # make a first heartbeat
 echo 0.0 0.0 0.0 0.0 0.0 > /var/spool/joboutputs/heartbeat
@@ -336,7 +338,7 @@ fi
  >/var/spool/joboutputs/dirac-pilot.log 2>&1
 
 # Save JobAgent and System logs
-cp -f /scratch/plt/jobagent.*.log /scratch/plt/shutdown_message* /var/log/boot.log /var/log/dmesg /var/log/secure /var/log/messages* /etc/cvmfs/default.* \
+cp -f /scratch/plt/bashrc /scratch/plt/jobagent.*.log /scratch/plt/shutdown_message* /var/log/boot.log /var/log/dmesg /var/log/secure /var/log/messages* /etc/cvmfs/default.* \
   /var/spool/joboutputs/
 
 (
@@ -347,9 +349,11 @@ cp -f /scratch/plt/jobagent.*.log /scratch/plt/shutdown_message* /var/log/boot.l
     curl --capath $X509_CERT_DIR --cert /root/x509proxy.pem --cacert /root/x509proxy.pem --location --upload-file "$i" \
      "$JOBOUTPUTS/"
 
-    # This will be replaced by extended pilot logging??
-    curl --capath $X509_CERT_DIR --cert /root/x509proxy.pem --cacert /root/x509proxy.pem --location --upload-file "$i" \
-     "https://lhcb-depo.cern.ch:9132/hosts/##user_data_space##/##user_data_machinetype##/##user_data_machine_hostname##/##user_data_uuid##/"
+    if [ "$DEPO_BASE_URL" != ""] ; then
+      # This will be replaced by extended pilot logging??
+      curl --capath $X509_CERT_DIR --cert /root/x509proxy.pem --cacert /root/x509proxy.pem --location --upload-file "$i" \
+        "$DEPO_BASE_URL/##user_data_space##/##user_data_machinetype##/##user_data_machine_hostname##/##user_data_uuid##/"
+    fi
    fi
   done
 )

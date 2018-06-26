@@ -24,7 +24,7 @@ cvmfs_config reload
 ##
 
 ##
-## gridpp is the default VO
+## Make gridpp the default VO
 ##
 if [ "$VO" == "lhcb" -o "$VO" == "" ] ; then
   VO=gridpp
@@ -33,4 +33,9 @@ fi
 ##
 ## Use the GridPP per-VO pools
 ##
-SUBMIT_POOL_OPTS="-o '/LocalSite/SubmitPool=Pool_${VO}' -o '/Resources/Computing/CEDefaults/SubmitPool=Pool_${VO}' -o '/Resources/Computing/CEDefaults/VirtualOrganization=${VO}' -g '2017-01-27'"
+export SUBMIT_POOL_OPTS="-o /LocalSite/SubmitPool=Pool_${VO} -o /Resources/Computing/CEDefaults/SubmitPool=Pool_${VO} -o /Resources/Computing/CEDefaults/VirtualOrganization=${VO} -g 2017-01-27"
+
+##
+## Write lots to our webserver
+##
+export DEPO_BASE_URL='https://depo.gridpp.ac.uk/hosts/'

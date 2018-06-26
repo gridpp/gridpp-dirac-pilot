@@ -22,18 +22,26 @@ import os
 import time
 import stat
 import socket
+import urllib
 import tarfile
 import httplib
 
-from pilotTools import CommandBase, retrieveUrlTimeout
+from pilotTools import CommandBase
 
 __RCSID__ = "$Id$"
 
 class GetPilotVersion( CommandBase ):
-  """ Now just return what was obtained by pilotTools.py
+  """ Now just returns what was obtained by pilotTools.py
   """
 
-  def __init__( self ):
+  def __init__( self, pilotParams ):
+    """ c'tor
+    """
+    super( GetPilotVersion, self ).__init__( pilotParams )
+
+  def execute(self):
+    """ Just returns what was obtained by pilotTools.py
+    """
     return self.pp.releaseVersion
 
 class CheckWorkerNode( CommandBase ):
@@ -96,7 +104,7 @@ class CheckWorkerNode( CommandBase ):
       self.log.info( 'Memory (kB)    = %s' % totalMem )
       self.log.info( 'FreeMem. (kB)  = %s' % freeMem )
 
-    ##############################################################################################################################
+    ###########################################################################
     # Disk space check
 
     # fs = os.statvfs( rootPath )
@@ -170,7 +178,7 @@ class InstallDIRAC( CommandBase ):
       self.installOpts.append( '-p "%s"' % self.pp.platform )
     if self.pp.releaseProject:
       self.installOpts.append( "-l '%s'" % self.pp.releaseProject )
-      
+
     # The release version to install is a requirement
     self.installOpts.append( '-r "%s"' % self.pp.releaseVersion )
 
@@ -201,12 +209,15 @@ class InstallDIRAC( CommandBase ):
       pass
 
   def _installDIRAC( self ):
-    """ launch the installation script
+    """ Install DIRAC or its extension, then parse the environment file created, and use it for subsequent calls
     """
+    # Installing
     installCmd = "%s %s" % ( self.installScript, " ".join( self.installOpts ) )
     self.log.debug( "Installing with: %s" % installCmd )
 
-    retCode, output = self.executeAndGetOutput( installCmd )
+    # At this point self.pp.installEnv may coincide with os.environ
+    # If extensions want to pass in a modified environment, it's easy to set self.pp.installEnv in an extended command
+    retCode, output = self.executeAndGetOutput( installCmd, self.pp.installEnv )
     self.log.info( output, header = False )
 
     if retCode:
@@ -214,36 +225,21 @@ class InstallDIRAC( CommandBase ):
       self.exitWithError( retCode )
     self.log.info( "%s completed successfully" % self.installScriptName )
 
-    diracScriptsPath = os.path.join( self.pp.rootPath, 'scripts' )
-    platformScript = os.path.join( diracScriptsPath, "dirac-platform" )
-    if not self.pp.platform:
-      retCode, output = self.executeAndGetOutput( platformScript )
-      if retCode:
-        self.log.error( "Failed to determine DIRAC platform [ERROR %d]" % retCode )
-        self.exitWithError( retCode )
-      self.pp.platform = output
-    diracBinPath = os.path.join( self.pp.rootPath, self.pp.platform, 'bin' )
-    diracLibPath = os.path.join( self.pp.rootPath, self.pp.platform, 'lib' )
-
-    # This breaks lcg-cr as it removes liblfc from the LD_LIBRARY_PATH.
-    #for envVarName in ( 'LD_LIBRARY_PATH', 'PYTHONPATH' ):
-    #  if envVarName in os.environ:
-    #    os.environ[ '%s_SAVE' % envVarName ] = os.environ[ envVarName ]
-    #    del os.environ[ envVarName ]
-    #  else:
-    #    os.environ[ '%s_SAVE' % envVarName ] = ""
-
-    if "LD_LIBRARY_PATH" in os.environ:
-      os.environ['LD_LIBRARY_PATH'] = "%s:%s" % ( diracLibPath, 
-                                                  os.getenv( 'LD_LIBRARY_PATH' ) )
-    else:
-      os.environ['LD_LIBRARY_PATH'] = "%s" % ( diracLibPath )
-    sys.path.insert( 0, self.pp.rootPath )
-    sys.path.insert( 0, diracScriptsPath )
-    if "PATH" in os.environ:
-      os.environ['PATH'] = '%s:%s:%s' % ( diracBinPath, diracScriptsPath, os.getenv( 'PATH' ) )
-    else:
-      os.environ['PATH'] = '%s:%s' % ( diracBinPath, diracScriptsPath )
+    # Parsing the bashrc then adding its content to the installEnv
+    # at this point self.pp.installEnv may still coincide with os.environ
+    retCode, output = self.executeAndGetOutput( 'bash -c "source bashrc && env"', self.pp.installEnv )
+    if retCode:
+      self.log.error( "Could not parse the bashrc file [ERROR %d]" % retCode )
+      self.exitWithError( retCode )
+    for line in output.split('\n'):
+      try:
+        var, value = [vx.strip() for vx in line.split( '=', 1 )]
+        if var == '_' or 'SSH' in var or '{' in value or '}' in value: # Avoiding useless/confusing stuff
+          continue
+        self.pp.installEnv[var] = value
+      except (IndexError, ValueError):
+        continue
+    # At this point self.pp.installEnv should contain all content of bashrc, sourced "on top" of (maybe) os.environ
     self.pp.diracInstalled = True
 
   def execute( self ):
@@ -253,33 +249,81 @@ class InstallDIRAC( CommandBase ):
     self._locateInstallationScript()
     self._installDIRAC()
 
+class ReplaceDIRACCode( CommandBase ):
+  """ This command will replace DIRAC code with the one taken from a different location.
+      This command is mostly for testing purposes, and should NOT be added in default configurations.
 
+      It uses -Y/--replaceDIRACCode option for specifying a TGZ archive with a URL which can be opened by
+      urllib.urlopen (on a webserver or a local .tgz file downloaded with the pilot directory.)
+      
+      The TGZ file should be created by something equivalent to this
+        cd /cvmfs/lhcb.cern.ch/lib/lhcb/DIRAC/DIRAC_v6r17p33
+        tar zcvf /tmp/DIRACdev.tgz *
+      so the DIRAC directory itself AND the scripts directory at the same level are included and will be 
+      unpacked in the ReplacementCode directory, which itself is added to PYTHONPATH. You must ensure that
+      the executable bits for scripts are retained when making the TGZ archive (they should be by default.)
+
+      You can include other packages (eg LHCbDIRAC) which should be found by Python, by including them at
+      that same top level when making the TGZ file.
+  """
+
+  def __init__( self, pilotParams ):
+    """ c'tor
+    """
+    super( ReplaceDIRACCode, self ).__init__( pilotParams )
+
+  def execute(self):
+    """ Download/untar a TGZ archive file
+    """
+    if not self.pp.replaceDIRACCode:
+      self.log.warn( "No -Y/--replaceDIRACCode given so no action by ReplaceDIRACCode pilot command!" )
+      return
+
+    os.mkdir( os.getcwd() + os.path.sep + 'ReplacementCode' )
+    
+    # Fetch and unpack the TGZ file
+    tar = tarfile.open( mode = "r|gz", fileobj = urllib.urlopen( self.pp.replaceDIRACCode ) )
+    tar.extractall( os.getcwd() + os.path.sep + 'ReplacementCode' )
+    tar.close()
+
+    # Add the ReplacementCode directory to the Python path
+    self.pp.installEnv['PYTHONPATH'] = os.getcwd() + os.path.sep + 'ReplacementCode' + ':' + self.pp.installEnv['PYTHONPATH']
+    self.pp.installEnv['PATH'] = os.getcwd() + os.path.sep + 'ReplacementCode' + os.path.sep + 'scripts:' + self.pp.installEnv['PATH']
+
+    self.log.info( "TGZ file %s unpacked. PYTHONPATH updated to be %s and PATH updated to be %s" % 
+                         ( self.pp.replaceDIRACCode, self.pp.installEnv['PYTHONPATH'], self.pp.installEnv['PATH'] ) )
 
 class ConfigureBasics( CommandBase ):
-  """ This command completes DIRAC installation, e.g. calls dirac-configure to:
-      - download, by default, the CAs
-      - creates a standard or custom (defined by self.pp.localConfigFile) cfg file
+  """ This command completes DIRAC installation.
+
+  It calls dirac-configure to:
+
+      * download, by default, the CAs
+      * creates a standard or custom (defined by self.pp.localConfigFile) cfg file
         to be used where all the pilot configuration is to be set, e.g.:
-      - adds to it basic info like the version
-      - adds to it the security configuration
+      * adds to it basic info like the version
+      * adds to it the security configuration
 
-      If there is more than one command calling dirac-configure, this one should be always the first one called.
+  If there is more than one command calling dirac-configure, this one should be always the first one called.
 
-      Nota Bene: Further commands should always call dirac-configure using the options -FDMH
-      Nota Bene: If custom cfg file is created further commands should call dirac-configure with
-                 "-O %s %s" % ( self.pp.localConfigFile, self.pp.localConfigFile )
+  .. note:: Further commands should always call dirac-configure using the options -FDMH
+  .. note:: If custom cfg file is created further commands should call dirac-configure with
+             "-O %s %s" % ( self.pp.localConfigFile, self.pp.localConfigFile )
 
-      From here on, we have to pay attention to the paths. Specifically, we need to know where to look for
-      - executables (scripts)
-      - DIRAC python code
-      If the pilot has installed DIRAC (and extensions) in the traditional way, so using the dirac-install.py script,
-      simply the current directory is used, and:
-      - scripts will be in $CWD/scripts.
-      - DIRAC python code will be all sitting in $CWD
-      - the local dirac.cfg file will be found in $CWD/etc
+  From here on, we have to pay attention to the paths. Specifically, we need to know where to look for
 
-      For a more general case of non-traditional installations, we should use the PATH and PYTHONPATH as set by the
-      installation phase. Executables and code will be searched there.
+      * executables (scripts)
+      * DIRAC python code
+
+  If the pilot has installed DIRAC (and extensions) in the traditional way, so using the dirac-install.py script,
+  simply the current directory is used, and:
+
+      * scripts will be in $CWD/scripts.
+      * DIRAC python code will be all sitting in $CWD
+      * the local dirac.cfg file will be found in $CWD/etc
+
+  For a more general case of non-traditional installations, we should use the PATH and PYTHONPATH as set by the
+  installation phase. Executables and code will be searched there.
   """
 
   def __init__( self, pilotParams ):
@@ -318,6 +362,7 @@ class ConfigureBasics( CommandBase ):
     if self.pp.configServer:
       self.cfg.append( '-C "%s"' % self.pp.configServer )
     if self.pp.releaseProject:
+      self.cfg.append( '-e "%s"' % self.pp.releaseProject )
       self.cfg.append( '-o /LocalSite/ReleaseProject=%s' % self.pp.releaseProject )
     if self.pp.gateway:
       self.cfg.append( '-W "%s"' % self.pp.gateway )
@@ -336,7 +381,7 @@ class ConfigureBasics( CommandBase ):
       self.cfg.append( "-o /DIRAC/Security/KeyFile=%s/hostkey.pem" % self.pp.certsLocation )
 
 class CheckCECapabilities( CommandBase ):
-  """ Used to get  CE tags.
+  """ Used to get CE tags and other relevant parameters.
   """
   def __init__( self, pilotParams ):
     """ c'tor
@@ -347,7 +392,7 @@ class CheckCECapabilities( CommandBase ):
     self.cfg = []
 
   def execute( self ):
-    """ Setup CE/Queue Tags
+    """ Setup CE/Queue Tags and other relevant parameters.
     """
 
     if self.pp.useServerCertificate:
@@ -355,7 +400,7 @@ class CheckCECapabilities( CommandBase ):
     if self.pp.localConfigFile:
       self.cfg.append( self.pp.localConfigFile )  # this file is as input
 
-
+    # Get the resource description as defined in its configuration
     checkCmd = 'dirac-resource-get-parameters -S %s -N %s -Q %s %s' % ( self.pp.site,
                                                                         self.pp.ceName,
                                                                         self.pp.queueName,
@@ -370,30 +415,58 @@ class CheckCECapabilities( CommandBase ):
     except ValueError:
       self.log.error( "The pilot command output is not json compatible." )
       sys.exit( 1 )
+
+    self.pp.queueParameters = resourceDict
+
+    cfg = []
+
+    # Pick up all the relevant resource parameters that will be used in the job matching
+    for ceParam in [ "WholeNode", "NumberOfProcessors" ]:
+      if ceParam in resourceDict:
+        cfg.append( '-o /Resources/Computing/CEDefaults/%s=%s' % ( ceParam, resourceDict[ ceParam ] ) )
+
+     # Tags must be added to already defined tags if any
     if resourceDict.get( 'Tag' ):
       self.pp.tags += resourceDict['Tag']
-      self.cfg.append( '-FDMH' )
 
-      if self.pp.useServerCertificate:
-        self.cfg.append( '-o  /DIRAC/Security/UseServerCertificate=yes' )
+    if self.pp.tags:
+      cfg.append( '-o "/Resources/Computing/CEDefaults/Tag=%s"' % ','.join( ( str( x ) for x in self.pp.tags ) ) )
 
-      if self.pp.localConfigFile:
-        self.cfg.append( '-O %s' % self.pp.localConfigFile )  # this file is as output
-        self.cfg.append( self.pp.localConfigFile )  # this file is as input
+    # RequiredTags are like Tags.
+    if resourceDict.get( 'RequiredTag' ):
+      self.pp.reqtags += resourceDict['RequiredTag']
+
+    if self.pp.reqtags:
+      cfg.append('-o "/Resources/Computing/CEDefaults/RequiredTag=%s"' %
+                      ','.join((str(x) for x in self.pp.reqtags)))
+
+    # If there is anything to be added to the local configuration, let's do it
+    if self.pp.useServerCertificate:
+      cfg.append( '-o /DIRAC/Security/UseServerCertificate=yes' )
+
+    if self.pp.localConfigFile:
+      cfg.append( '-O %s' % self.pp.localConfigFile )  # this file is as output
+      cfg.append( self.pp.localConfigFile )  # this file is as input
+
+
+    if cfg:
+      cfg.append( '-FDMH' )
 
       if self.debugFlag:
-        self.cfg.append( '-ddd' )
+        cfg.append( '-ddd' )
 
-      self.cfg.append( '-o "/Resources/Computing/CEDefaults/Tag=%s"' % ','.join( ( str( x ) for x in self.pp.tags ) ) )
-
-      configureCmd = "%s %s" % ( self.pp.configureScript, " ".join( self.cfg ) )
+      configureCmd = "%s %s" % (self.pp.configureScript, " ".join(cfg))
       retCode, _configureOutData = self.executeAndGetOutput( configureCmd, self.pp.installEnv )
       if retCode:
         self.log.error( "Could not configure DIRAC [ERROR %d]" % retCode )
         self.exitWithError( retCode )
 
+    else:
+      self.log.debug("No CE parameters (tags) defined for %s/%s" % (self.pp.ceName, self.pp.queueName))
+
 class CheckWNCapabilities( CommandBase ):
-  """ Used to get capabilities specific to the Worker Node.
+  """ Used to get capabilities specific to the Worker Node. This command must be called
+      after the CheckCECapabilities command
   """
 
   def __init__( self, pilotParams ):
@@ -403,48 +476,71 @@ class CheckWNCapabilities( CommandBase ):
     self.cfg = []
 
   def execute( self ):
-    """ Discover #Processors and memory
+    """ Discover NumberOfProcessors and RAM
     """
 
     if self.pp.useServerCertificate:
       self.cfg.append( '-o /DIRAC/Security/UseServerCertificate=yes' )
     if self.pp.localConfigFile:
       self.cfg.append( self.pp.localConfigFile )  # this file is as input
-
-    checkCmd = 'dirac-wms-get-wn-parameters -S %s -N %s -Q %s %s' % ( self.pp.site, self.pp.ceName, self.pp.queueName,
+    # Get the worker node parameters
+    checkCmd = 'dirac-wms-get-wn-parameters -S %s -N %s -Q %s %s' % (self.pp.site,
+                                                                     self.pp.ceName,
+                                                                     self.pp.queueName,
                                                                       " ".join( self.cfg ) )
     retCode, result = self.executeAndGetOutput( checkCmd, self.pp.installEnv )
     if retCode:
       self.log.error( "Could not get resource parameters [ERROR %d]" % retCode )
       self.exitWithError( retCode )
+    numberOfProcessors = 0
     try:
       result = result.split( ' ' )
-      numberOfProcessor = int( result[0] )
+      numberOfProcessors = int( result[0] )
       maxRAM = int( result[1] )
     except ValueError:
       self.log.error( "Wrong Command output %s" % result )
       sys.exit( 1 )
-    if numberOfProcessor or maxRAM:
-      self.cfg.append( '-FDMH' )
+
+    cfg = []
+    # If NumberOfProcessors or MaxRAM are defined in the resource configuration, these
+    # values are preferred
+    numberOfProcessors = self.pp.queueParameters.get(
+        'NumberOfProcessors', numberOfProcessors)
+    # if maxNumberOfProcessors is asked in pilotWrapper
+    if self.pp.maxNumberOfProcessors:
+      self.log.debug("Overriding with a requested number of processors")
+      numberOfProcessors = self.pp.maxNumberOfProcessors
+
+    if not numberOfProcessors:
+      self.log.warn("Could not retrieve number of processors, assuming 1")
+      numberOfProcessors = 1
+    self.cfg.append(
+        '-o "/Resources/Computing/CEDefaults/NumberOfProcessors=%d"' % int(numberOfProcessors))
+
+    maxRAM = self.pp.queueParameters.get('MaxRAM', maxRAM)
+    if maxRAM:
+      try:
+        self.cfg.append(
+            '-o "/Resources/Computing/CEDefaults/MaxRAM=%d"' % int(maxRAM))
+      except ValueError:
+        self.log.warn("MaxRAM is not an integer, will not fill it")
+    else:
+      self.log.warn(
+          "Could not retrieve MaxRAM, this parameter won't be filled")
+
+    if cfg:
+      cfg.append( '-FDMH' )
 
       if self.pp.useServerCertificate:
-        self.cfg.append( '-o /DIRAC/Security/UseServerCertificate=yes' )
+        cfg.append( '-o /DIRAC/Security/UseServerCertificate=yes' )
       if self.pp.localConfigFile:
-        self.cfg.append( '-O %s' % self.pp.localConfigFile )  # this file is as output
-        self.cfg.append( self.pp.localConfigFile )  # this file is as input
+        cfg.append( '-O %s' % self.pp.localConfigFile )  # this file is as output
+        cfg.append( self.pp.localConfigFile )  # this file is as input
 
       if self.debugFlag:
-        self.cfg.append( '-ddd' )
+        cfg.append('-ddd')
 
-      if numberOfProcessor:
-        self.cfg.append( '-o "/Resources/Computing/CEDefaults/NumberOfProcessors=%d"' % numberOfProcessor )
-      else:
-        self.log.warn( "Could not retrieve number of processors" )
-      if maxRAM:
-        self.cfg.append( '-o "/Resources/Computing/CEDefaults/MaxRAM=%d"' % maxRAM )
-      else:
-        self.log.warn( "Could not retrieve MaxRAM" )
-      configureCmd = "%s %s" % ( self.pp.configureScript, " ".join( self.cfg ) )
+      configureCmd = "%s %s" % (self.pp.configureScript, " ".join(cfg))
       retCode, _configureOutData = self.executeAndGetOutput( configureCmd, self.pp.installEnv )
       if retCode:
         self.log.error( "Could not configure DIRAC [ERROR %d]" % retCode )
@@ -530,8 +626,10 @@ class ConfigureSite( CommandBase ):
   def __setFlavour( self ):
 
     pilotRef = 'Unknown'
+    self.pp.flavour = 'Generic'
 
-    # Pilot reference is specified at submission
+    # If pilot reference is specified at submission, then set flavour to DIRAC
+    # unless overridden by presence of batch system environment variables
     if self.pp.pilotReference:
       self.pp.flavour = 'DIRAC'
       pilotRef = self.pp.pilotReference
@@ -580,17 +678,6 @@ class ConfigureSite( CommandBase ):
       self.pp.flavour = 'CREAM'
       pilotRef = os.environ['CREAM_JOBID']
 
-    # If we still have the GLITE_WMS_JOBID, it means that the submission
-    # was through the WMS, take this reference then
-    if 'EDG_WL_JOBID' in os.environ:
-      self.pp.flavour = 'LCG'
-      pilotRef = os.environ['EDG_WL_JOBID']
-
-    if 'GLITE_WMS_JOBID' in os.environ:
-      if os.environ['GLITE_WMS_JOBID'] != 'N/A':
-        self.pp.flavour = 'gLite'
-        pilotRef = os.environ['GLITE_WMS_JOBID']
-
     if 'OSG_WN_TMP' in os.environ:
       self.pp.flavour = 'OSG'
 
@@ -629,6 +716,14 @@ class ConfigureSite( CommandBase ):
       if 'BOINC_HOST_NAME' in os.environ:
         self.boincHostName = os.environ['BOINC_HOST_NAME']
 
+    # Pilot reference is given explicitly in environment
+    if 'PILOT_UUID' in os.environ:
+      pilotRef = os.environ['PILOT_UUID']
+
+    # Pilot reference is specified at submission
+    if self.pp.pilotReference:
+      pilotRef = self.pp.pilotReference
+
     self.log.debug( "Flavour: %s; pilot reference: %s " % ( self.pp.flavour, pilotRef ) )
 
     self.pp.pilotReference = pilotRef
@@ -637,7 +732,7 @@ class ConfigureSite( CommandBase ):
     """ Try to get the CE name
     """
     # FIXME: this should not be part of the standard configuration (flavours discriminations should stay out)
-    if self.pp.flavour in ['LCG', 'gLite', 'OSG']:
+    if self.pp.flavour in ['LCG', 'OSG']:
       retCode, CEName = self.executeAndGetOutput( 'glite-brokerinfo getCE',
                                                   self.pp.installEnv )
       if retCode:
@@ -754,8 +849,8 @@ class ConfigureCPURequirements( CommandBase ):
       configFileArg = '-o /DIRAC/Security/UseServerCertificate=yes'
     if self.pp.localConfigFile:
       configFileArg = '%s -R %s %s' % ( configFileArg, self.pp.localConfigFile, self.pp.localConfigFile )
-    retCode, cpuNormalizationFactorOutput = self.executeAndGetOutput( 'dirac-wms-cpu-normalization -U %s' % configFileArg,
-                                                                      self.pp.installEnv )
+    retCode, cpuNormalizationFactorOutput = self.executeAndGetOutput(
+        'dirac-wms-cpu-normalization -U %s' % configFileArg, self.pp.installEnv)
     if retCode:
       self.log.error( "Failed to determine cpu normalization [ERROR %d]" % retCode )
       self.exitWithError( retCode )
@@ -764,7 +859,9 @@ class ConfigureCPURequirements( CommandBase ):
     # FIXME: this is a (necessary) hack!
     cpuNormalizationFactor = float( cpuNormalizationFactorOutput.split( '\n' )[0].replace( "Estimated CPU power is ",
                                                                                            '' ).replace( " HS06", '' ) )
-    self.log.info( "Current normalized CPU as determined by 'dirac-wms-cpu-normalization' is %f" % cpuNormalizationFactor )
+    self.log.info(
+        "Current normalized CPU as determined by 'dirac-wms-cpu-normalization' is %f" %
+        cpuNormalizationFactor)
 
     configFileArg = ''
     if self.pp.useServerCertificate:
@@ -779,11 +876,13 @@ class ConfigureCPURequirements( CommandBase ):
 
     for line in cpuTimeOutput.split( '\n' ):
       if "CPU time left determined as" in line:
+        # FIXME: this is horrible
         cpuTime = int(line.replace("CPU time left determined as", '').strip())
     self.log.info( "CPUTime left (in seconds) is %s" % cpuTime )
 
     # HS06s = seconds * HS06
     try:
+      # determining the CPU time left (in HS06s)
       self.pp.jobCPUReq = float( cpuTime ) * float( cpuNormalizationFactor )
       self.log.info( "Queue length (which is also set as CPUTimeLeft) is %f" % self.pp.jobCPUReq )
     except ValueError:
@@ -839,6 +938,8 @@ class LaunchAgent( CommandBase ):
 
     if self.debugFlag:
       self.jobAgentOpts.append( '-o LogLevel=DEBUG' )
+    else:
+      self.jobAgentOpts.append( '-o LogLevel=INFO' )
 
     if self.pp.userGroup:
       self.log.debug( 'Setting DIRAC Group to "%s"' % self.pp.userGroup )
@@ -862,12 +963,13 @@ class LaunchAgent( CommandBase ):
 
 
   def __startJobAgent( self ):
-    """ Starting of the JobAgent
+    """ Starting of the JobAgent (or of a user-defined command)
     """
 
-    # Find any .cfg file uploaded with the sandbox or generated by previous commands
-
     diracAgentScript = "dirac-agent"
+
+    # Find any .cfg file uploaded with the sandbox or generated by previous commands
+    # and add it in input of the JobAgent run
     extraCFG = []
     for i in os.listdir( self.pp.rootPath ):
       cfg = os.path.join( self.pp.rootPath, i )
@@ -985,13 +1087,13 @@ class MultiLaunchAgent( CommandBase ):
     for i in xrange(self.pp.processors):
 
       # One JobAgent per processor allocated to this pilot
-      
+
       if self.pp.ceType == 'Sudo':
         # Available within the SudoComputingElement as BaseUsername in the ceParameters
         sudoOpts = '-o /LocalSite/BaseUsername=%s%02dp00' % ( os.environ['USER'], i )
       else:
         sudoOpts = ''
-      
+
       jobAgent = ('%s WorkloadManagement/JobAgent %s %s %s %s'
                   % ( diracAgentScript,
                       " ".join( self.jobAgentOpts ),
@@ -999,7 +1101,7 @@ class MultiLaunchAgent( CommandBase ):
                       sudoOpts,
                       " ".join( extraCFG )))
 
-      pid[i] = self.forkAndExecute( jobAgent, 
+      pid[i] = self.forkAndExecute( jobAgent,
                                     os.path.join( self.pp.workingDir, 'jobagent.%02d.log' % i ),
                                     self.pp.installEnv )
 
@@ -1017,7 +1119,7 @@ class MultiLaunchAgent( CommandBase ):
       open( os.path.join( self.pp.workingDir, 'shutdown_message.%02d' % i ), 'w' ).write( shutdownMessage )
       print shutdownMessage
 
-    # FIX ME: this effectively picks one at random. Should be the last one to finish chronologically. 
+    # FIX ME: this effectively picks one at random. Should be the last one to finish chronologically.
     # Not in order of being started.
     open( os.path.join( self.pp.workingDir, 'shutdown_message' ), 'w' ).write( shutdownMessage )
 
@@ -1035,49 +1137,50 @@ class MultiLaunchAgent( CommandBase ):
     # log file patterns to look for and corresponding messages
     messageMappings = [
 
-    # Variants of: "100 Shutdown as requested by the VM's host/hypervisor"
-    ######################################################################
-    # There are other errors from the TimeLeft handling, but we let those go 
-    # to the 600 Failed default
-    ['INFO: JobAgent will stop with message "No time left for slot', '100 No time left for slot'],
+        # Variants of: "100 Shutdown as requested by the VM's host/hypervisor"
+        ######################################################################
+        # There are other errors from the TimeLeft handling, but we let those go
+        # to the 600 Failed default
+        ['INFO: JobAgent will stop with message "No time left for slot', '100 No time left for slot'],
 
-    # Variants of: "200 Intended work completed ok"
-    ###############################################
-    # Our work is done. More work available in the queue? Who knows!
-    ['INFO: JobAgent will stop with message "Filling Mode is Disabled', '200 Filling Mode is Disabled'],
-    ['NOTICE:  Cycle was successful', '200 Success'],
+        # Variants of: "200 Intended work completed ok"
+        ###############################################
+        # Our work is done. More work available in the queue? Who knows!
+        ['INFO: JobAgent will stop with message "Filling Mode is Disabled', '200 Filling Mode is Disabled'],
+        ['NOTICE:  Cycle was successful', '200 Success'],
 
-    #
-    # !!! Codes 300-699 trigger Vac/Vcycle backoff procedure !!!
-    #
+        #
+        # !!! Codes 300-699 trigger Vac/Vcycle backoff procedure !!!
+        #
 
-    # Variants of: "300 No more work available from task queue"
-    ###########################################################
-    # We asked, but nothing more from the matcher. 
-    ['INFO: JobAgent will stop with message "Nothing to do for more than', '300 Nothing to do'],
+        # Variants of: "300 No more work available from task queue"
+        ###########################################################
+        # We asked, but nothing more from the matcher.
+        ['INFO: JobAgent will stop with message "Nothing to do for more than', '300 Nothing to do'],
+        ['Job request OK: No match found', '300 Nothing to do'],
 
-    # Variants of: "400 Site/host/VM is currently banned/disabled from receiving more work"
-    #######################################################################################
+        # Variants of: "400 Site/host/VM is currently banned/disabled from receiving more work"
+        #######################################################################################
 
-    # Variants of: "500 Problem detected with environment/VM/contextualization provided by the site"
-    ################################################################################################
-    # This detects using an RFC proxy to talk to legacy-only DIRAC
-    ['Error while handshaking [("Remote certificate hasn', '500 Certificate/proxy not acceptable'],
+        # Variants of: "500 Problem detected with environment/VM/contextualization provided by the site"
+        ################################################################################################
+        # This detects using an RFC proxy to talk to legacy-only DIRAC
+        ['Error while handshaking [("Remote certificate hasn', '500 Certificate/proxy not acceptable'],
 
-    # Variants of: "600 Grid-wide problem with job agent or application within VM"
-    ##############################################################################
-    ['ERROR: Pilot version does not match the production version', '600 Cannot match jobs with this pilot version'],
- 
-    # Variants of: "700 Error related to job agent or application within VM"
-    ########################################################################
-    # Some of the ways the JobAgent/Application can stop with errors. 
-    # Otherwise we just get the default 700 Failed message.
-    ['INFO: JobAgent will stop with message "Job Rescheduled', '600 Problem so job rescheduled'],
-    ['INFO: JobAgent will stop with message "Matcher Failed', '600 Matcher Failed'],
-    ['INFO: JobAgent will stop with message "JDL Problem', '600 JDL Problem'],
-    ['INFO: JobAgent will stop with message "Payload Proxy Not Found', '600 Payload Proxy Not Found'],
-    ['INFO: JobAgent will stop with message "Problem Rescheduling Job', '600 Problem Rescheduling Job'],
-    ['INFO: JobAgent will stop with message "Payload execution failed with error code', '600 Payload execution failed with error'],
+        # Variants of: "600 Grid-wide problem with job agent or application within VM"
+        ##############################################################################
+        ['ERROR: Pilot version does not match the production version', '600 Cannot match jobs with this pilot version'],
+
+        # Variants of: "700 Error related to job agent or application within VM"
+        ########################################################################
+        # Some of the ways the JobAgent/Application can stop with errors.
+        # Otherwise we just get the default 700 Failed message.
+        ['INFO: JobAgent will stop with message "Job Rescheduled', '600 Problem so job rescheduled'],
+        ['INFO: JobAgent will stop with message "Matcher Failed', '600 Matcher Failed'],
+        ['INFO: JobAgent will stop with message "JDL Problem', '600 JDL Problem'],
+        ['INFO: JobAgent will stop with message "Payload Proxy Not Found', '600 Payload Proxy Not Found'],
+        ['INFO: JobAgent will stop with message "Problem Rescheduling Job', '600 Problem Rescheduling Job'],
+        ['INFO: JobAgent will stop with message "Payload execution failed with error code', '600 Payload execution failed with error'],
 
     ]
 
@@ -1095,7 +1198,7 @@ class MultiLaunchAgent( CommandBase ):
            shutdownMessage = pair[1]
            break
 
-      oneline = f.readline()    
+      oneline = f.readline()
 
     f.close()
 
@@ -1112,13 +1215,13 @@ class MultiLaunchAgent( CommandBase ):
 class NagiosProbes( CommandBase ):
   """ Run one or more Nagios probe scripts that follow the Nagios Plugin API:
        https://assets.nagios.com/downloads/nagioscore/docs/nagioscore/3/en/pluginapi.html
-  
+
       Each probe is a script or executable present in the pilot directory, which is
       executed to gather its return code and stdout messages. Probe name = filename.
-      
+
       Probes must not expect any command line arguments but can gather information about
       the current machine from expected environment variables etc.
-  
+
       The results are reported through the Pilot Logger.
   """
 
@@ -1132,7 +1235,7 @@ class NagiosProbes( CommandBase ):
   def _setNagiosOptions( self ):
     """ Setup list of Nagios probes and optional PUT URL from pilot.json
     """
-   
+
     try:
       self.nagiosProbes = [str( pv ).strip() for pv in self.pp.pilotJSON['Setups'][self.pp.setup]['NagiosProbes'].split(',')]
     except KeyError:
@@ -1184,7 +1287,7 @@ class NagiosProbes( CommandBase ):
 
       # report results to pilot logger too. Like this:
       #   "NagiosProbes", probeCmd, retStatus, str(retCode) + ' ' + output.split('\n',1)[0]
-     
+
       if self.nagiosPutURL:
         # Alternate logging of results to HTTPS PUT service too
         hostPort = self.nagiosPutURL.split('/')[2]
@@ -1202,10 +1305,10 @@ class NagiosProbes( CommandBase ):
 
         except Exception as e:
           self.log.error( 'PUT of %s Nagios output fails with %s' % ( probeCmd, str(e) ) )
-         
+
         else:
           result = connection.getresponse()
-         
+
           if result.status / 100 == 2:
             self.log.info( 'PUT of %s Nagios output succeeds with %d %s' % ( probeCmd, result.status, result.reason ) )
           else :
@@ -1217,34 +1320,3 @@ class NagiosProbes( CommandBase ):
     self._setNagiosOptions()
     self._runNagiosProbes()
 
-class UnpackDev( CommandBase ):
-  """ Unpack dev.tgz from the pilot directory into the pilot directory
-      Put dev.tgz in the remote pilot directory to have it fetched along
-      with the rest of the pilot scripts. The UnpackDev pilot command
-      needs to be listed after InstallDIRAC if it contains dev versions
-      of DIRAC modules.
-  """
-
-  def __init__( self, pilotParams ):
-    """ c'tor
-    """
-    super( UnpackDev, self ).__init__( pilotParams )
-    self.devFile = 'dev.tgz'
-
-  def execute( self ):
-    """ Standard entry point to a pilot command
-    """
-    self.log.info( 'Unpacking ' + self.devFile )
-    try:
-      tar = tarfile.open( self.devFile )
-    except Exception as e:
-      raise Exception( "Could not open %s (%s)" % ( self.devFile, str( e ) ) )
-    
-    try:
-      tar.extractall()
-    except Exception as e:
-      raise Exception( "Could not unpack %s (%s)" % ( self.devFile, str( e ) ) )
-    finally:
-      tar.close()
-
-    self.log.info( "%s unpacked successfully" % self.devFile )
