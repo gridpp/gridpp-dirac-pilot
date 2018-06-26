@@ -38,4 +38,4 @@ export SUBMIT_POOL_OPTS="-o /LocalSite/SubmitPool=Pool_${VO} -o /Resources/Compu
 ##
 ## Write lots to our webserver
 ##
-export DEPO_BASE_URL='https://depo.gridpp.ac.uk/hosts/'
+export DEPO_BASE_URL='https://depo.gridpp.ac.uk/hosts'
