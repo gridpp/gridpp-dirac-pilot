@@ -33,9 +33,9 @@ fi
 ##
 ## Use the GridPP per-VO pools
 ##
-export SUBMIT_POOL_OPTS="-o /LocalSite/SubmitPool=Pool_${VO} -o /Resources/Computing/CEDefaults/SubmitPool=Pool_${VO} -o /Resources/Computing/CEDefaults/VirtualOrganization=${VO} -g 2017-01-27"
+export SUBMIT_POOL_OPTS="-o /LocalSite/SubmitPool=Pool_${VO} -o /Resources/Computing/CEDefaults/SubmitPool=Pool_${VO} -o /Resources/Computing/CEDefaults/VirtualOrganization=${VO} -g v13r0"
 
 ##
-## Write lots to our webserver
+## Write logs to our webserver
 ##
 export DEPO_BASE_URL='https://depo.gridpp.ac.uk/hosts'
